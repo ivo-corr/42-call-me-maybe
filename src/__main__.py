@@ -44,6 +44,7 @@ def main() -> None:
     fc_json: list[dict] = json.loads(function_calling_tests)
 
     fds: list[FunctionDefinition] = []
+    fcs: list[FunctionCall] = []
     for fd in fd_json:
         fds.append(FunctionDefinition(
             name=fd['name'],
@@ -52,6 +53,11 @@ def main() -> None:
             return_type=fd['returns']['type'],
             description=fd['description']
         ))
+    for fc in fc_json:
+        fcs.append(FunctionCall(
+            prompt=fc['prompt']
+        ))
+    breakpoint()
     model: llm_sdk.Small_LLM_Model = llm_sdk.Small_LLM_Model()
     with open(model.get_path_to_vocab_file()) as file:
         vocab_str: str = file.read()
