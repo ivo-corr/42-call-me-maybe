@@ -2,6 +2,7 @@ import llm_sdk
 import json
 import argparse
 
+
 def main() -> None:
     argparser = argparse.ArgumentParser()
     argparser.add_argument("--functions_definition", type=str)

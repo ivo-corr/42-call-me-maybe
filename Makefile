@@ -1,7 +1,7 @@
 INTRA		= icorrale
 VENV_NAME	= call_me_maybe-venv
 SDK_PATH	= ./llm_sdk
-MAIN_PATH	= main.py
+MAIN_PATH	= src/main.py
 
 export UV_CACHE_DIR=/goinfre/$(INTRA)/uv-cache
 export UV_PROJECT_ENVIRONMENT=/goinfre/$(INTRA)/$(VENV_NAME)
