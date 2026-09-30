@@ -13,27 +13,34 @@ class FunctionDefinition(BaseModel):
 
 class FunctionCall(BaseModel):
     prefix: str = """
-    You choose which function best answers each prompt. For every prompt,
-output one JSON object with the prompt, the name of the function to
-call, and its parameters. Only use functions from the list below.
-
-Available functions:
-- fn_add_numbers: adds two numbers.
-  Parameters: a (number), b (number)
-- fn_reverse_string: reverses a string.
-  Parameters: s (string)
-
 Examples:
+{
+    "prompt": "What is the sum of 2 and 3?",
+    "name": "fn_add_numbers",
+    "parameters": {"a": 2.0, "b": 3.0}
+}
 
-{ "prompt": "What is the sum of 10 and 7?", "name": "fn_add_numbers", "parameters": {"a": 10.0, "b": 7.0} }
+{
+    "prompt": "What is the sum of 10 and 7?",
+    "name": "fn_add_numbers",
+    "parameters": {"a": 10.0, "b": 7.0}
+}
 
-{ "prompt": "Reverse the string 'world'", "name": "fn_reverse_string", "parameters": {"s": "world"} }
+{
+    "prompt": "Reverse the string 'world'",
+    "name": "fn_reverse_string",
+    "parameters": {"s": "world"}
+}
 
-{ "prompt": "Add 4.5 and 1.5", "name": "fn_add_numbers", "parameters": {"a": 4.5, "b": 1.5} }
+{
+    "prompt": "Add 4.5 and 1.5",
+    "name": "fn_add_numbers",
+    "parameters": {"a": 4.5, "b": 1.5}
+}
 
 Now the real one:
 
-{ "prompt": "What is the sum of 2 and 3?", "name": """
+"""
     og_prompt: str
     prompt: str | None = None
 
@@ -125,7 +132,7 @@ def main() -> None:
     for fc in fc_json:
         fcs.append(
             FunctionCall(
-                prompt="{ \"prompt\": \"What is the sum of 10 and 7?\", \"name\": "
+                prompt="What is the sum of 100000 and 7?"
                 # prompt=fc['prompt']
             ))
 
