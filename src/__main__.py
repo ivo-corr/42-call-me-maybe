@@ -12,10 +12,17 @@ class FunctionDefinition(BaseModel):
 
 
 class FunctionCall(BaseModel):
-    prompt: str
+    original_prompt: str
+    actual_prompt: str
 
-    def reprompt(logit):
-        prompt = prompt + logit
+    def reprompt(self, m):
+        vocab = m.get_vocab()
+        input_ids = m.model.encode(self.actual_prompt)
+        logits = m.model.get_logits_from_input_ids(input_ids.tolist()[0])
+        vocab_list = [(vocab[token_id], logits[token_id])
+                      for token_id in range(len(vocab))]
+        breakpoint()
+
 
 
 class Model():
@@ -61,7 +68,7 @@ def main() -> None:
     fc_json: list[dict] = json.loads(function_calling_tests)
 
     fds: list[FunctionDefinition] = []
-    fcs: list[FunctionCall] = []
+    fcs: list[tuple[FunctionCall, FunctionCall]] = []
 
     for fd in fd_json:
         fds.append(FunctionDefinition(
@@ -72,21 +79,25 @@ def main() -> None:
             description=fd['description']
         ))
     for fc in fc_json:
-        fcs.append(FunctionCall(
+        fcs.append((FunctionCall(
+            prompt=str(fc)),
+            FunctionCall(
             prompt=fc['prompt']
-        ))
+        )))
 
     m = Model()
-    vocab = m.get_vocab()
 
-    prompt: str = '{name: '
-    while (True):
-        input_ids = m.model.encode(prompt)
-        logits = m.model.get_logits_from_input_ids(input_ids.tolist()[0])
-        vocab_list = [(vocab[token_id], logits[token_id])
-                      for token_id in range(len(vocab))]
-        print(prompt.replace("Ġ", " "))
-        prompt = prompt + max(vocab_list, key=lambda x: x[1])[0]
+    for fcalls in fcs:
+        while (True):
+            fcalls[0].reprompt(m)
+    # prompt: str = '{name: '
+    # while (True):
+    #     input_ids = m.model.encode(prompt)
+    #     logits = m.model.get_logits_from_input_ids(input_ids.tolist()[0])
+    #     vocab_list = [(vocab[token_id], logits[token_id])
+    #                   for token_id in range(len(vocab))]
+    #     print(prompt.replace("Ġ", " "))
+    #     prompt = prompt + max(vocab_list, key=lambda x: x[1])[0]
 
 
 if __name__ == '__main__':
