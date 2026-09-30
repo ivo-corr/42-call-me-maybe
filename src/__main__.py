@@ -64,7 +64,6 @@ Now the real one:
         vocab_list = [(vocab[token_id], logits[token_id], token_id)
                       for token_id in range(len(vocab))]
         print(self.prompt)
-        breakpoint()
         self.prompt = self.prompt + m.model.decode(max(vocab_list, key=lambda x: x[1])[2])
 
 
@@ -126,8 +125,8 @@ def main() -> None:
     for fc in fc_json:
         fcs.append(
             FunctionCall(
-                json_prompt=str(fc),
-                prompt=fc['prompt']
+                prompt="{ \"prompt\": \"What is the sum of 10 and 7?\", \"name\": "
+                # prompt=fc['prompt']
             ))
 
     m = Model()
