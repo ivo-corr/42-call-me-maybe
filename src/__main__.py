@@ -17,6 +17,23 @@ class FunctionCall(BaseModel):
     def reprompt(logit):
         prompt = prompt + logit
 
+
+class Model():
+    def __init__(self):
+        self.model: llm_sdk.Small_LLM_Model = llm_sdk.Small_LLM_Model()
+    
+    def get_vocab(self):
+        try:
+            with open(self.model.get_path_to_vocab_file()) as file:
+                vocab_str: str = file.read()
+                vocab: list[dict] = json.loads(vocab_str)
+                vocab = {int(token_id): token for token, token_id in vocab.items()}
+        except Exception:
+            print("Something went wrong retrieving the vocab.")
+            exit()
+        return vocab
+
+
 def main() -> None:
     argparser = argparse.ArgumentParser()
     argparser.add_argument("--functions_definition", type=str)
@@ -39,12 +56,13 @@ def main() -> None:
     except Exception as e:
         print(f"Something went wrong: {e}")
         exit()
-    
+
     fd_json: list[dict] = json.loads(functions_definition)
     fc_json: list[dict] = json.loads(function_calling_tests)
 
     fds: list[FunctionDefinition] = []
     fcs: list[FunctionCall] = []
+
     for fd in fd_json:
         fds.append(FunctionDefinition(
             name=fd['name'],
@@ -57,20 +75,17 @@ def main() -> None:
         fcs.append(FunctionCall(
             prompt=fc['prompt']
         ))
-    breakpoint()
-    model: llm_sdk.Small_LLM_Model = llm_sdk.Small_LLM_Model()
-    with open(model.get_path_to_vocab_file()) as file:
-        vocab_str: str = file.read()
-        vocab: list[dict] = json.loads(vocab_str)
-        vocab = {int(token_id): token for token, token_id in vocab.items()}
-    prompt: str = 'What is 2 + 2?'
+
+    m = Model()
+    vocab = m.get_vocab()
+
+    prompt: str = '{name: '
     while (True):
-        input_ids = model.encode(prompt)
-        logits = model.get_logits_from_input_ids(input_ids.tolist()[0])
+        input_ids = m.model.encode(prompt)
+        logits = m.model.get_logits_from_input_ids(input_ids.tolist()[0])
         vocab_list = [(vocab[token_id], logits[token_id])
                       for token_id in range(len(vocab))]
         print(prompt.replace("Ġ", " "))
-        breakpoint()
         prompt = prompt + max(vocab_list, key=lambda x: x[1])[0]
 
 
