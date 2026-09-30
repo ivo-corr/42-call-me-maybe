@@ -2,6 +2,7 @@ import llm_sdk
 import json
 import argparse
 from pydantic import BaseModel, model_validator
+import os
 
 
 class FunctionDefinition(BaseModel):
@@ -139,11 +140,29 @@ def main() -> None:
             ))
 
     m = Model()
-
     for fcalls in fcs:
         finished: bool = fcalls.reprompt(m)
         while (not finished):
             finished = fcalls.reprompt(m)
+        m.responses.append(fcalls.prompt)
+    if args.output is None:
+        try:
+            os.makedirs('data/output', exist_ok=True)
+            with open('data/output/function_calls.json', 'w') as file:
+                for r in m.responses:
+                    file.write(r)
+        except Exception as e:
+            print(f"There is an issue with the output file!: \n{e}")
+    else:
+        #to fix
+        try:
+            os.makedirs((yes := args.output.rsplit('/', 1))[0], exist_ok=True)
+            with open(yes[1], 'w') as file:
+                for r in m.responses:
+                    file.write(r)
+        except Exception as e:
+            print(f"There is an issue with the output file!: \n{e}")
+
 
 
 if __name__ == '__main__':
