@@ -12,6 +12,28 @@ class FunctionDefinition(BaseModel):
 
 
 class FunctionCall(BaseModel):
+    prefix: str = """
+    You choose which function best answers each prompt. For every prompt,
+output one JSON object with the prompt, the name of the function to
+call, and its parameters. Only use functions from the list below.
+
+Available functions:
+- fn_add_numbers: adds two numbers.
+  Parameters: a (number), b (number)
+- fn_reverse_string: reverses a string.
+  Parameters: s (string)
+
+Examples:
+
+{ "prompt": "What is the sum of 10 and 7?", "name": "fn_add_numbers", "parameters": {"a": 10.0, "b": 7.0} }
+
+{ "prompt": "Reverse the string 'world'", "name": "fn_reverse_string", "parameters": {"s": "world"} }
+
+{ "prompt": "Add 4.5 and 1.5", "name": "fn_add_numbers", "parameters": {"a": 4.5, "b": 1.5} }
+
+Now the real one:
+
+{ "prompt": "What is the sum of 2 and 3?", "name": """
     og_prompt: str
     prompt: str | None = None
 
@@ -28,26 +50,29 @@ class FunctionCall(BaseModel):
             data['og_prompt'] = data['prompt']
         return data
 
-    def response(self):
-        return self.prompt[len(self.og_prompt):]
+    def response(self, replace_spaces: bool = True):
+        return self.prompt[len(self.og_prompt):].replace("Ġ", " ")\
+               if replace_spaces else self.prompt[len(self.og_prompt):]
 
-    def is_json_compliant(self, logit: str):
+    def is_json(self, logit: str):
         pass
 
     def reprompt(self, m, og: int = 0):
         vocab = m.get_vocab()
-        input_ids = m.model.encode(self.prompt)
+        input_ids = m.model.encode(self.prefix + self.prompt)
         logits = m.model.get_logits_from_input_ids(input_ids.tolist()[0])
-        vocab_list = [(vocab[token_id], logits[token_id])
+        vocab_list = [(vocab[token_id], logits[token_id], token_id)
                       for token_id in range(len(vocab))]
-        print(self.prompt.replace("Ġ", " "))
-        self.prompt = self.prompt + max(vocab_list, key=lambda x: x[1])[0]
+        print(self.prompt)
+        breakpoint()
+        self.prompt = self.prompt + m.model.decode(max(vocab_list, key=lambda x: x[1])[2])
 
 
 class Model():
     def __init__(self):
         self.model: llm_sdk.Small_LLM_Model = llm_sdk.Small_LLM_Model()
-    
+        self.responses: list[str] = []
+
     def get_vocab(self):
         try:
             with open(self.model.get_path_to_vocab_file()) as file:
