@@ -13,7 +13,6 @@ class FunctionDefinition(BaseModel):
 
 class FunctionCall(BaseModel):
     prefix: str = """
-Examples:
 {
     "prompt": "What is the sum of 2 and 3?",
     "name": "fn_add_numbers",
@@ -132,7 +131,7 @@ def main() -> None:
     for fc in fc_json:
         fcs.append(
             FunctionCall(
-                prompt="What is the sum of 100000 and 7?"
+                prompt="{\n\t\"prompt\": \"What is the sum of 100000 and 7?\",\n\t"
                 # prompt=fc['prompt']
             ))
 
