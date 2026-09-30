@@ -63,7 +63,7 @@ Now the real one:
     def is_json(self, logit: str):
         pass
 
-    def reprompt(self, m, og: int = 0):
+    def reprompt(self, m, og: int = 0) -> bool:
         vocab = m.get_vocab()
         input_ids = m.model.encode(self.prefix + self.prompt)
         logits = m.model.get_logits_from_input_ids(input_ids.tolist()[0])
@@ -71,6 +71,9 @@ Now the real one:
                       for token_id in range(len(vocab))]
         print(self.prompt)
         self.prompt = self.prompt + m.model.decode(max(vocab_list, key=lambda x: x[1])[2])
+        if (self.response().count('{') == 1 and self.response().count('}') == 2):
+            return 1
+        return 0
 
 
 class Model():
@@ -131,15 +134,16 @@ def main() -> None:
     for fc in fc_json:
         fcs.append(
             FunctionCall(
-                prompt="{\n\t\"prompt\": \"What is the sum of 100000 and 7?\",\n\t"
+                prompt="{\n\t\"prompt\": \"" + fc['prompt'] + "\",\n\t"
                 # prompt=fc['prompt']
             ))
 
     m = Model()
 
     for fcalls in fcs:
-        while (True):
-            fcalls.reprompt(m)
+        finished: bool = fcalls.reprompt(m)
+        while (not finished):
+            finished = fcalls.reprompt(m)
 
 
 if __name__ == '__main__':
