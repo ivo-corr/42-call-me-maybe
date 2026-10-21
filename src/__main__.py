@@ -14,8 +14,7 @@ class FunctionDefinition(BaseModel):
 
 
 class FunctionCall(BaseModel):
-    prefix: str = ''
-    postfix: str = """
+    prefix: str = """
 {
     "prompt": "What is the sum of 2 and 3?",
     "name": "fn_add_numbers",
@@ -33,12 +32,7 @@ Now the real one:
     fds: list[FunctionDefinition]
 
     @model_validator(mode='after')
-    def set_postfix(self):
-        self.prefix += self.postfix
-
-    @model_validator(mode='after')
     def space_after_prompt(self):
-        breakpoint()
         if not self.og_prompt.endswith(" "):
             self.og_prompt += ' '
         return self
@@ -57,7 +51,9 @@ Now the real one:
     def is_json(self, logit: str):
         pass
 
-    def reprompt(self, m, og: int = 0) -> bool:
+    def reprompt(self, m,
+                 constrain: list[bool] = [True, True],
+                 og: int = 0) -> bool:
         vocab = m.get_vocab()
         input_ids = m.model.encode(self.prefix + self.prompt)
         logits = m.model.get_logits_from_input_ids(input_ids.tolist()[0])
@@ -67,7 +63,7 @@ Now the real one:
         print(self.prompt)
         # if (self.prompt[-9:] == '"name": "'):
         # fn_name constraint
-        if self.name_pattern.search(self.prompt)\
+        if constrain[0] and self.name_pattern.search(self.prompt)\
            and self.complete_fn_name == "not_found":
             fnames: list[str] = [f.name for f in m.fdefinitions]
             partial_fn_name = self.prompt.split("name\": \"")[1]
@@ -85,7 +81,7 @@ Now the real one:
             if self.complete_fn_name == "not_found":
                 self.prompt = self.prompt + m.model.decode(
                     max(constrained_vocab, key=lambda x: x[1])[2])
-        elif self.parameter_pattern.search(self.prompt):
+        elif constrain[1] and self.parameter_pattern.search(self.prompt):
             fd: FunctionDefinition = [fd for fd in self.fds if fd.name == self.complete_fn_name][0]
             fd_args = fd.arguments
             partial_args: list[str] = self.prompt.split("parameters\": {\"")[1]
@@ -132,6 +128,36 @@ class Model(BaseModel):
         return vocab
 
 
+def build_prefix(functions_definition: str) -> str:
+    lines = []
+    for fn in functions_definition:
+        params = fn["parameters"]
+        sig = ", ".join(f"{k}: {v['type']}" for k, v in params.items())
+        n = len(params)
+        lines.append(
+            f"- {fn['name']}: takes {n} parameter{'s' if n != 1 else ''} "
+            f"({sig}). {fn['description']}"
+        )
+
+    return (
+        "You convert a user request into a JSON function call.\n"
+        "Reply with ONE JSON object and nothing else.\n"
+        'Pick exactly one function from the list. Copy the request into "prompt".\n'
+        "Use EXACTLY the parameters listed for that function: "
+        "no extra, no missing, same names.\n"
+        "Numbers must be written as floats (2.0, not 2).\n\n"
+        "Functions:\n" + "\n".join(lines) + "\n\n"
+        "Examples:\n\n"
+        "Request: What is 4 times 5?\n"
+        '{"prompt": "What is 4 times 5?", "name": "fn_multiply", '
+        '"parameters": {"x": 4.0, "y": 5.0}}\n\n'
+        "Request: Make 'abc' uppercase\n"
+        '{"prompt": "Make \'abc\' uppercase", "name": "fn_to_upper", '
+        '"parameters": {"text": "abc"}}\n\n'
+        "Request: "
+    )
+
+
 def main() -> None:
     argparser = argparse.ArgumentParser()
     argparser.add_argument("--functions_definition", type=str)
@@ -154,12 +180,13 @@ def main() -> None:
     except Exception as e:
         print(f"Something went wrong: {e}")
         exit()
-    prefix: str = functions_definition + function_calling_tests
+
     fd_json: list[dict] = json.loads(functions_definition)
     fc_json: list[dict] = json.loads(function_calling_tests)
 
     fds: list[FunctionDefinition] = []
     fcs: list[FunctionCall] = []
+
     for fd in fd_json:
         fds.append(FunctionDefinition(
             name=fd['name'],
@@ -171,9 +198,10 @@ def main() -> None:
     for fc in fc_json:
         fcs.append(
             FunctionCall(
+                prefix=build_prefix(fd_json),
                 prompt="{\n\t\"prompt\": \"" + fc['prompt'] + "\",\n\t",
-                fds=fds,
-                prefix=prefix
+                fds=fds
+                # prompt=fc['prompt']
             ))
     m = Model(fdefinitions=fds)
     for fcalls in fcs:
