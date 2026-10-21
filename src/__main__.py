@@ -52,7 +52,7 @@ Now the real one:
         pass
 
     def reprompt(self, m,
-                 constrain: list[bool] = [True, True],
+                 constrain: list[int],
                  og: int = 0) -> bool:
         vocab = m.get_vocab()
         input_ids = m.model.encode(self.prefix + self.prompt)
@@ -205,9 +205,9 @@ def main() -> None:
             ))
     m = Model(fdefinitions=fds)
     for fcalls in fcs:
-        finished: bool = fcalls.reprompt(m)
+        finished: bool = fcalls.reprompt(m, [1, 0])
         while (not finished):
-            finished = fcalls.reprompt(m)
+            finished = fcalls.reprompt(m, [1, 0])
         m.responses.append(fcalls.prompt)
     if args.output is None:
         try:
