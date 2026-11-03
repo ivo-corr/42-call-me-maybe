@@ -65,7 +65,8 @@ Now the real one:
         # fn_name constraint
         if constrain[0] and self.name_pattern.search(self.prompt)\
            and self.complete_fn_name == "not_found":
-            fnames: list[str] = [f.name for f in m.fdefinitions]
+            fnames: list[str] = [f.name for f in m.fdefinitions]\
+                                + ["fn_unknown_function"]
             partial_fn_name = self.prompt.split("name\": \"")[1]
             fnames_tokens: list[int] = [
                 t for sub in
@@ -154,6 +155,9 @@ def build_prefix(functions_definition: str) -> str:
         "Request: Make 'abc' uppercase\n"
         '{"prompt": "Make \'abc\' uppercase", "name": "fn_to_upper", '
         '"parameters": {"text": "abc"}}\n\n'
+        "Request: What's the weather in Paris tomorrow?\n"
+        '{"prompt": "What\'s the weather in Paris tomorrow?", '
+        '"name": "fn_unknown_function", "parameters": {}}\n\n'
         "Request: "
     )
 
@@ -199,7 +203,8 @@ def main() -> None:
         fcs.append(
             FunctionCall(
                 prefix=build_prefix(fd_json),
-                prompt="{\n\t\"prompt\": \"" + fc['prompt'] + "\",\n\t",
+                prompt="{\n\t\"prompt\": " + json.dumps(fc['prompt'])
+                + ",\n\t",
                 fds=fds
                 # prompt=fc['prompt']
             ))
@@ -209,23 +214,16 @@ def main() -> None:
         while (not finished):
             finished = fcalls.reprompt(m, [1, 0])
         m.responses.append(fcalls.prompt)
-    if args.output is None:
-        try:
-            os.makedirs('data/output', exist_ok=True)
-            with open('data/output/function_calls.json', 'w') as file:
-                for r in m.responses:
-                    file.write(r)
-        except Exception as e:
-            print(f"There is an issue with the output file!: \n{e}")
-    else:
-        #to fix
-        try:
-            os.makedirs((yes := args.output.rsplit('/', 1))[0], exist_ok=True)
-            with open(yes[1], 'w') as file:
-                for r in m.responses:
-                    file.write(r)
-        except Exception as e:
-            print(f"There is an issue with the output file!: \n{e}")
+    output_path: str = args.output if args.output is not None \
+        else 'data/output/function_calls.json'
+    try:
+        os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+        with open(output_path, 'w') as file:
+            file.write("[\n"
+                       + ",\n".join(r.strip() for r in m.responses)
+                       + "\n]\n")
+    except Exception as e:
+        print(f"There is an issue with the output file!: \n{e}")
 
 
 if __name__ == '__main__':
