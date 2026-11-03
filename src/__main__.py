@@ -24,46 +24,48 @@ class FunctionCall(BaseModel):
 Now the real one:
 
 """
-    og_prompt: str
+    og_prompt: str = ''
     prompt: str | None = None
-    name_pattern: str = re.compile(r'"name": "[^,]*\Z')
-    parameter_pattern: str = re.compile(r'"parameters"\s*:\s*\{\s*"')
+    name_pattern: re.Pattern[str] = re.compile(r'"name": "[^,]*\Z')
+    parameter_pattern: re.Pattern[str] = re.compile(
+        r'"parameters"\s*:\s*\{\s*"')
     complete_fn_name: str = "not_found"
     fds: list[FunctionDefinition]
 
     @model_validator(mode='after')
-    def space_after_prompt(self):
+    def space_after_prompt(self) -> "FunctionCall":
         if not self.og_prompt.endswith(" "):
             self.og_prompt += ' '
         return self
 
     @model_validator(mode='before')
     @classmethod
-    def set_original_prompt(cls, data):
+    def set_original_prompt(cls, data) -> "FunctionCall":
         if data.get("og_prompt") is None:
             data['og_prompt'] = data['prompt']
         return data
 
-    def response(self, replace_spaces: bool = True):
-        return self.prompt[len(self.og_prompt):].replace("Ġ", " ")\
-               if replace_spaces else self.prompt[len(self.og_prompt):]
-
-    def is_json(self, logit: str):
-        pass
+    def response(self, replace_spaces: bool = True) -> str | None:
+        return (self.prompt[len(self.og_prompt):].replace("Ġ", " ")
+                if replace_spaces else self.prompt[len(self.og_prompt):])\
+               if self.prompt is not None else None
 
     def reprompt(self, m,
                  constrain: list[int],
-                 og: int = 0) -> bool:
+                 og: int = 0) -> int:
         vocab = m.get_vocab()
-        input_ids = m.model.encode(self.prefix + self.prompt)
+        if self.prompt:
+            input_ids = m.model.encode(self.prefix + self.prompt)
         logits = m.model.get_logits_from_input_ids(input_ids.tolist()[0])
-        vocab_list: tuple[str, float, int] = [(vocab[token_id], logits[token_id], token_id)
-                      for token_id in range(len(vocab))]
+        vocab_list: list[tuple[str, float, int]] = [
+            (vocab[token_id], logits[token_id], token_id)
+            for token_id in range(len(vocab))]
         # constrained decoding !
         print(self.prompt)
         # if (self.prompt[-9:] == '"name": "'):
         # fn_name constraint
-        if constrain[0] and self.name_pattern.search(self.prompt)\
+        if constrain[0] and self.prompt is not None and\
+            self.name_pattern.search(self.prompt)\
            and self.complete_fn_name == "not_found":
             fnames: list[str] = [f.name for f in m.fdefinitions]\
                                 + ["fn_unknown_function"]
@@ -71,7 +73,7 @@ Now the real one:
             fnames_tokens: list[int] = [
                 t for sub in
                 [m.model.encode(fn).tolist()[0] for fn in fnames] for t in sub]
-            constrained_vocab: tuple[str, float, int] = [
+            constrained_vocab: list[tuple[str, float, int]] = [
                 logit for logit in vocab_list if logit[2] in fnames_tokens and
                 any([re.search((partial_fn_name + logit[0]), fn_name)
                      for fn_name in fnames])
@@ -81,11 +83,15 @@ Now the real one:
                 self.prompt = self.prompt + "\","
             if self.complete_fn_name == "not_found":
                 self.prompt = self.prompt + m.model.decode(
-                    max(constrained_vocab, key=lambda x: x[1])[2])
-        elif constrain[1] and self.parameter_pattern.search(self.prompt):
-            fd: FunctionDefinition = [fd for fd in self.fds if fd.name == self.complete_fn_name][0]
+                    max(constrained_vocab,
+                        key=lambda x: x[1])[2]) if len(constrained_vocab) > 0 else None
+        elif constrain[1] and self.prompt is not None and\
+                self.parameter_pattern.search(
+                self.prompt):
+            fd: FunctionDefinition = [
+                fd for fd in self.fds if fd.name == self.complete_fn_name][0]
             fd_args = fd.arguments
-            partial_args: list[str] = self.prompt.split("parameters\": {\"")[1]
+            partial_args: str = self.prompt.split("parameters\": {\"")[1]
             parsed_partial_args: list[str] = partial_args.split("\"")
             # constrained_vocab: tuple[str, float, int] = [
             #     logit for logit in vocab_list
@@ -102,8 +108,8 @@ Now the real one:
         else:
             self.prompt = self.prompt + m.model.decode(
                 max(vocab_list, key=lambda x: x[1])[2])
-        if (self.response().count('{') == 1
-                and self.response().count('}') == 2):
+        if (r := self.response()) is not None and (
+                r.count('{') == 1 and r.count('}') == 2):
             return 1
         return 0
 
@@ -129,7 +135,7 @@ class Model(BaseModel):
         return vocab
 
 
-def build_prefix(functions_definition: str) -> str:
+def build_prefix(functions_definition: list[dict[str, str]]) -> str:
     lines = []
     for fn in functions_definition:
         params = fn["parameters"]
@@ -174,13 +180,13 @@ def main() -> None:
                 functions_definition: str = file.read()
         else:
             with open(args.functions_definition) as file:
-                functions_definition: str = file.read()
+                functions_definition = file.read()
         if args.input is None:
             with open("data/input/function_calling_tests.json") as file:
                 function_calling_tests: str = file.read()
         else:
             with open(args.input) as file:
-                function_calling_tests: str = file.read()
+                function_calling_tests = file.read()
     except Exception as e:
         print(f"Something went wrong: {e}")
         exit()
@@ -210,10 +216,11 @@ def main() -> None:
             ))
     m = Model(fdefinitions=fds)
     for fcalls in fcs:
-        finished: bool = fcalls.reprompt(m, [1, 0])
+        finished: int = fcalls.reprompt(m, [1, 0])
         while (not finished):
             finished = fcalls.reprompt(m, [1, 0])
-        m.responses.append(fcalls.prompt)
+        m.responses.append(fcalls.prompt) if fcalls.prompt is not None\
+            else None
     output_path: str = args.output if args.output is not None \
         else 'data/output/function_calls.json'
     try:

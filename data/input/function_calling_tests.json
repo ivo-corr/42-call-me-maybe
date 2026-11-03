@@ -1,56 +1,35 @@
 [
   {
-    "prompt": "What is the weather like today?"
+    "prompt": "What is the sum of 2 and 3?"
   },
   {
-    "prompt": "Tell me a joke?"
+    "prompt": "What is the sum of 265 and 345?"
   },
   {
-    "prompt": "What time is it?"
+    "prompt": "Greet shrek"
   },
   {
-    "prompt": ""
+    "prompt": "Greet john"
   },
   {
-    "prompt": "  "
+    "prompt": "Reverse the string 'hello'"
   },
   {
-    "prompt": "?"
+    "prompt": "Reverse the string 'world'"
   },
   {
-    "prompt": "What is the sum of 9999999999 and  8888888888?"
+    "prompt": "What is the square root of 16?"
   },
   {
-    "prompt": "Calculate the square root of 999999999999?"
+    "prompt": "Calculate the square root of 144"
   },
   {
-    "prompt": "Add 0.00000001 and 0.00000002"
+    "prompt": "Replace all numbers in \"Hello 34 I'm 233 years old\" with NUMBERS"
   },
   {
-    "prompt": "what is the sum of -5 and 3?"
+    "prompt": "Replace all vowels in 'Programming is fun' with asterisks"
   },
   {
-    "prompt": "what is square root of -16"
-  },
-  {
-    "prompt": "Greet Conan O'Brien"
-  },
-  {
-    "prompt": "reverse the string 'a\\b\\c'"
-  },
-  {
-    "prompt": "replace all numbers in 'nothing to replace here' with X"
-  },
-  {
-    "prompt": "Substitute the word '' with 'dog' in 'cat cat cat'"
-  },
-  {
-    "prompt": "Reverse and greet Brien"
-  },
-  {
-    "prompt": "What is square root of the sum of 4 and 5?"
-  },
-  {
-    "prompt": "Please, if it's not too much trouble, and I know this might seem like an odd request, could you possibly help me figure out, if you have the time, what the sum would be of the two numbers 12 and 34, thank you so much in advance"
+    "prompt": "Substitute the word 'cat' with 'dog' in 'The cat sat on the mat with another cat'"
   }
 ]
