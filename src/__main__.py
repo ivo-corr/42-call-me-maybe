@@ -54,11 +54,12 @@ Now the real one:
     def reprompt(self, m: "Model",
                  constrain: list[int],
                  og: int = 0) -> int:
-        vocab: dict[str, Any] = m.get_vocab()
-        if self.prompt:
-            input_ids = m.model.encode(self.prefix + self.prompt)
+        vocab: dict[int, str] = m.get_vocab()
+        if self.prompt is None:
+            return 0
+        input_ids = m.model.encode(self.prefix + self.prompt)
         logits = m.model.get_logits_from_input_ids(input_ids.tolist()[0])
-        vocab_list: list[tuple[dict[Any, Any], float, int]] = [
+        vocab_list: list[tuple[str, float, int]] = [
             (vocab[token_id], logits[token_id], token_id)
             for token_id in range(len(vocab))]
         # constrained decoding !
@@ -76,24 +77,21 @@ Now the real one:
                 [m.model.encode(fn).tolist()[0] for fn in fnames] for t in sub]
             constrained_vocab: list[tuple[str, float, int]] = [
                 logit for logit in vocab_list if logit[2] in fnames_tokens and
-                any([re.search((partial_fn_name + logit[0]), fn_name)
+                any([re.search(partial_fn_name + logit[0], fn_name)
                      for fn_name in fnames])
             ]
             if partial_fn_name in fnames:
                 self.complete_fn_name = partial_fn_name
                 self.prompt = self.prompt + "\","
             if self.complete_fn_name == "not_found":
-                self.prompt = self.prompt + m.model.decode(
-                    max(constrained_vocab,
-                        key=lambda x: x[1])[2]) if len(constrained_vocab) > 0 else None
+                self.prompt = (
+                    self.prompt + m.model.decode(
+                        max(constrained_vocab, key=lambda x: x[1])[2])
+                    if constrained_vocab else None
+                )
         elif constrain[1] and self.prompt is not None and\
                 self.parameter_pattern.search(
                 self.prompt):
-            fd: FunctionDefinition = [
-                fd for fd in self.fds if fd.name == self.complete_fn_name][0]
-            fd_args = fd.arguments
-            partial_args: str = self.prompt.split("parameters\": {\"")[1]
-            parsed_partial_args: list[str] = partial_args.split("\"")
             # constrained_vocab: tuple[str, float, int] = [
             #     logit for logit in vocab_list
             #     if logit[0] == fd_args[(len(parsed_partial_args) % 3) - 1][0]
@@ -123,20 +121,22 @@ class Model(BaseModel):
     responses: list[str] = Field(default_factory=list)
     fdefinitions: list[FunctionDefinition] = Field(default_factory=list)
 
-    def get_vocab(self) -> dict[str, Any]:
+    def get_vocab(self) -> dict[int, str]:
         try:
             with open(self.model.get_path_to_vocab_file()) as file:
                 vocab_str: str = file.read()
-                vocab: list[dict] = json.loads(vocab_str)
+                raw_vocab: dict[str, int] = json.loads(vocab_str)
                 vocab = {
-                    int(token_id): token for token, token_id in vocab.items()}
+                    int(token_id): token
+                    for token, token_id in raw_vocab.items()
+                }
         except Exception:
             print("Something went wrong retrieving the vocab.")
             exit()
         return vocab
 
 
-def build_prefix(functions_definition: list[dict[str, str]]) -> str:
+def build_prefix(functions_definition: list[dict[str, Any]]) -> str:
     lines = []
     for fn in functions_definition:
         params = fn["parameters"]
@@ -150,7 +150,8 @@ def build_prefix(functions_definition: list[dict[str, str]]) -> str:
     return (
         "You convert a user request into a JSON function call.\n"
         "Reply with ONE JSON object and nothing else.\n"
-        'Pick exactly one function from the list. Copy the request into "prompt".\n'
+        'Pick exactly one function from the list. '
+        'Copy the request into "prompt".\n'
         "Use EXACTLY the parameters listed for that function: "
         "no extra, no missing, same names.\n"
         "Numbers must be written as floats (2.0, not 2).\n\n"
@@ -192,8 +193,8 @@ def main() -> None:
         print(f"Something went wrong: {e}")
         exit()
 
-    fd_json: list[dict] = json.loads(functions_definition)
-    fc_json: list[dict] = json.loads(function_calling_tests)
+    fd_json: list[dict[str, Any]] = json.loads(functions_definition)
+    fc_json: list[dict[str, Any]] = json.loads(function_calling_tests)
 
     fds: list[FunctionDefinition] = []
     fcs: list[FunctionCall] = []
