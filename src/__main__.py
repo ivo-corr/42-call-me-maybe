@@ -4,6 +4,7 @@ import argparse
 from pydantic import BaseModel, model_validator, Field, ConfigDict
 import os
 import re
+from typing import Any
 
 
 class FunctionDefinition(BaseModel):
@@ -40,7 +41,7 @@ Now the real one:
 
     @model_validator(mode='before')
     @classmethod
-    def set_original_prompt(cls, data) -> "FunctionCall":
+    def set_original_prompt(cls, data: dict[str, Any]) -> dict[str, Any]:
         if data.get("og_prompt") is None:
             data['og_prompt'] = data['prompt']
         return data
@@ -50,14 +51,14 @@ Now the real one:
                 if replace_spaces else self.prompt[len(self.og_prompt):])\
                if self.prompt is not None else None
 
-    def reprompt(self, m,
+    def reprompt(self, m: "Model",
                  constrain: list[int],
                  og: int = 0) -> int:
-        vocab = m.get_vocab()
+        vocab: dict[str, Any] = m.get_vocab()
         if self.prompt:
             input_ids = m.model.encode(self.prefix + self.prompt)
         logits = m.model.get_logits_from_input_ids(input_ids.tolist()[0])
-        vocab_list: list[tuple[str, float, int]] = [
+        vocab_list: list[tuple[dict[Any, Any], float, int]] = [
             (vocab[token_id], logits[token_id], token_id)
             for token_id in range(len(vocab))]
         # constrained decoding !
@@ -122,7 +123,7 @@ class Model(BaseModel):
     responses: list[str] = Field(default_factory=list)
     fdefinitions: list[FunctionDefinition] = Field(default_factory=list)
 
-    def get_vocab(self):
+    def get_vocab(self) -> dict[str, Any]:
         try:
             with open(self.model.get_path_to_vocab_file()) as file:
                 vocab_str: str = file.read()
