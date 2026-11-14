@@ -5,7 +5,8 @@ from pydantic import BaseModel, model_validator, Field, ConfigDict
 import os
 import re
 from typing import Any
-
+import numpy as np
+import time
 
 class FunctionDefinition(BaseModel):
     name: str
@@ -53,64 +54,111 @@ Now the real one:
 
     def reprompt(self, m: "Model",
                  constrain: list[int],
-                 og: int = 0) -> int:
-        vocab: dict[int, str] = m.get_vocab()
+                 vocab: dict[int, str],
+                 og: int = 0,
+                 _cache: dict[str, Any] = {},
+                 ) -> int:
         if self.prompt is None:
-            return 0
-        input_ids = m.model.encode(self.prefix + self.prompt)
-        logits = m.model.get_logits_from_input_ids(input_ids.tolist()[0])
-        vocab_list: list[tuple[str, float, int]] = [
-            (vocab[token_id], logits[token_id], token_id)
-            for token_id in range(len(vocab))]
-        # constrained decoding !
-        print(self.prompt)
-        # if (self.prompt[-9:] == '"name": "'):
-        # fn_name constraint
-        if constrain[0] and self.prompt is not None and\
-            self.name_pattern.search(self.prompt)\
-           and self.complete_fn_name == "not_found":
-            fnames: list[str] = [f.name for f in m.fdefinitions]\
-                                + ["fn_unknown_function"]
-            partial_fn_name = self.prompt.split("name\": \"")[1]
-            fnames_tokens: list[int] = [
-                t for sub in
-                [m.model.encode(fn).tolist()[0] for fn in fnames] for t in sub]
-            constrained_vocab: list[tuple[str, float, int]] = [
-                logit for logit in vocab_list if logit[2] in fnames_tokens and
-                any([re.search(partial_fn_name + logit[0], fn_name)
-                     for fn_name in fnames])
-            ]
-            if partial_fn_name in fnames:
-                self.complete_fn_name = partial_fn_name
-                self.prompt = self.prompt + "\","
-            if self.complete_fn_name == "not_found":
-                self.prompt = (
-                    self.prompt + m.model.decode(
-                        max(constrained_vocab, key=lambda x: x[1])[2])
-                    if constrained_vocab else None
-                )
-        elif constrain[1] and self.prompt is not None and\
-                self.parameter_pattern.search(
-                self.prompt):
-            # constrained_vocab: tuple[str, float, int] = [
-            #     logit for logit in vocab_list
-            #     if logit[0] == fd_args[(len(parsed_partial_args) % 3) - 1][0]
-            #     and logit[0] not in parsed_partial_args
-            # ]
-            # breakpoint()
-            # if len(constrained_vocab) > 0:
-            #     self.prompt = self.prompt + m.model.decode(
-            #         max(constrained_vocab, key=lambda x: x[1])[2])
-            # else:
-            self.prompt = self.prompt + m.model.decode(
-                max(vocab_list, key=lambda x: x[1])[2])
-        else:
-            self.prompt = self.prompt + m.model.decode(
-                max(vocab_list, key=lambda x: x[1])[2])
-        if (r := self.response()) is not None and (
-                r.count('{') == 1 and r.count('}') == 2):
             return 1
-        return 0
+
+        MAX_NAME, MAX_VALUE = 12, 40
+        names = [f.name for f in m.fdefinitions] + ["fn_unknown_function"]
+
+        def enc(text: str) -> list[int]:
+            return m.model.encode(text).tolist()[0]
+
+        def scores(ids: list[int]) -> np.ndarray:
+            return np.asarray(
+                m.model.get_logits_from_input_ids(ids), dtype=float)
+
+        # one-time setup: runs on the first call only, then reused
+        if not _cache:
+            ids_in_names = {t for n in names for t in enc(n)}
+            _cache["name_pieces"] = {
+                t: m.model.decode(t) for t in ids_in_names}
+            # tokens not allowed inside a string value
+            # (byte-level markers: Ċ newline, ĉ tab, č carriage return)
+            _cache["banned"] = np.array(
+                [t for t, s in vocab.items()
+                 if any(c in s for c in "Ċĉč\\")], dtype=int)
+            # tokens made only of digits, '.' and '-'
+            _cache["number"] = np.array(
+                [t for t, s in vocab.items()
+                 if s and all(c in "0123456789.-" for c in s)], dtype=int)
+            # tokens that end a number
+            _cache["terms"] = {enc(c)[0] for c in (",", "}")}
+            _cache["quote"] = enc('"')[0]
+        name_pieces: dict[int, str] = _cache["name_pieces"]
+        quote_id: int = _cache["quote"]
+
+        # recover the question from the starting prompt that main builds
+        question = json.loads(
+            self.prompt.rstrip().rstrip(",") + "}")["prompt"]
+
+        # forced start of the output: costs no forward pass by itself
+        ids = enc(self.prefix + '{"prompt": ' + json.dumps(question)
+                  + ', "name": "')
+
+        # 1. function name: only pieces that keep us a prefix of a real name
+        name = ""
+        for _ in range(MAX_NAME):
+            ext = [t for t, text in name_pieces.items()
+                   if any(n.startswith(name + text) for n in names)]
+            if not ext:
+                break
+            cands = ext + ([quote_id] if name in names else [])
+            s = scores(ids)
+            t = max(cands, key=lambda c: s[c])
+            if t == quote_id:
+                break
+            ids.append(t)
+            name += name_pieces[t]
+
+        # 2. parameters: keys are forced, only the values are generated
+        fdef = next((f for f in m.fdefinitions if f.name == name), None)
+        params: dict[str, Any] = {}
+        ids += enc('", "parameters": {')
+        for i, (pname, ptype) in enumerate(fdef.arguments if fdef else []):
+            is_str = ptype == "string"
+            ids += enc(("" if i == 0 else ", ") + json.dumps(pname) + ": "
+                       + ('"' if is_str else ""))
+            text = ""
+            for _ in range(MAX_VALUE):
+                s = scores(ids)
+                if is_str:
+                    s[_cache["banned"]] = -np.inf
+                    t = int(np.argmax(s))
+                    piece = m.model.decode(t)
+                    if '"' in piece:            # closing quote: value done
+                        text += piece.split('"')[0]
+                        break
+                else:
+                    allowed = np.full_like(s, -np.inf)
+                    allowed[_cache["number"]] = s[_cache["number"]]
+                    if text:                    # need at least one character
+                        for tid in _cache["terms"]:
+                            allowed[tid] = s[tid]
+                    t = int(np.argmax(allowed))
+                    if t in _cache["terms"]:    # number done
+                        break
+                    piece = m.model.decode(t)
+                ids.append(t)
+                text += piece
+            if is_str:
+                params[pname] = text
+                ids += enc('"')
+            else:
+                try:
+                    params[pname] = (int(float(text)) if ptype == "integer"
+                                     else float(text))
+                except ValueError:
+                    params[pname] = 0.0
+
+        # 3. build the output in Python, so it is always valid JSON
+        self.prompt = json.dumps(
+            {"prompt": question, "name": name, "parameters": params},
+            indent=2)
+        return 1
 
 
 class Model(BaseModel):
@@ -198,7 +246,8 @@ def main() -> None:
 
     fds: list[FunctionDefinition] = []
     fcs: list[FunctionCall] = []
-
+    
+    start_time = time.perf_counter()
     for fd in fd_json:
         fds.append(FunctionDefinition(
             name=fd['name'],
@@ -217,12 +266,16 @@ def main() -> None:
                 # prompt=fc['prompt']
             ))
     m = Model(fdefinitions=fds)
+    vocab: dict[int, str] = m.get_vocab()
     for fcalls in fcs:
-        finished: int = fcalls.reprompt(m, [1, 0])
+        finished: int = fcalls.reprompt(m, [1, 0], vocab)
         while (not finished):
-            finished = fcalls.reprompt(m, [1, 0])
+            finished = fcalls.reprompt(m, [1, 0], vocab)
         m.responses.append(fcalls.prompt) if fcalls.prompt is not None\
             else None
+    finish_time = time.perf_counter()
+    print("====\ntotal time: " + str((finish_time - start_time)/60) + " minutes\n====")
+
     output_path: str = args.output if args.output is not None \
         else 'data/output/function_calls.json'
     try:
