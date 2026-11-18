@@ -1,14 +1,33 @@
+"""Function calling with constrained decoding on a small LLM.
+
+Translates natural-language requests into JSON function calls. The model
+only chooses among valid function names and generates the values of the
+parameters, while the JSON structure itself is forced and built in Python,
+so the output is always valid JSON.
+"""
+
 import llm_sdk
 import json
 import argparse
 from pydantic import BaseModel, model_validator, Field, ConfigDict
 import os
 import re
-from typing import Any
+from typing import Any, cast
 import numpy as np
 import time
 
+
 class FunctionDefinition(BaseModel):
+    """Description of a function the model is allowed to call.
+
+    Attributes:
+        name: Name of the function (e.g. ``fn_add_numbers``).
+        arguments: List of ``[parameter_name, parameter_type]`` pairs, in
+            the order the parameters must be generated.
+        return_type: Type returned by the function.
+        description: Human-readable description of what it does.
+    """
+
     name: str
     arguments: list[list[str]]
     return_type: str
@@ -16,6 +35,25 @@ class FunctionDefinition(BaseModel):
 
 
 class FunctionCall(BaseModel):
+    """A single user request being converted into a function call.
+
+    Holds the few-shot prefix and the prompt, and runs the constrained
+    decoding that produces the final JSON function call. After
+    ``reprompt`` finishes, ``prompt`` contains the resulting JSON text.
+
+    Attributes:
+        prefix: Text prepended to the request as context for the model.
+        og_prompt: Original prompt, used to slice off the generated part.
+            Defaults to ``prompt`` and always ends with a space.
+        prompt: Current prompt text. Replaced by the final JSON string
+            once generation is done.
+        name_pattern: Regex matching an unfinished ``"name"`` field.
+        parameter_pattern: Regex matching the start of the ``"parameters"``
+            object.
+        complete_fn_name: Name of the function that was selected.
+        fds: Definitions of all the available functions.
+    """
+
     prefix: str = """
 {
     "prompt": "What is the sum of 2 and 3?",
@@ -36,6 +74,11 @@ Now the real one:
 
     @model_validator(mode='after')
     def space_after_prompt(self) -> "FunctionCall":
+        """Ensure ``og_prompt`` ends with a trailing space.
+
+        Returns:
+            The validated instance, with ``og_prompt`` normalized.
+        """
         if not self.og_prompt.endswith(" "):
             self.og_prompt += ' '
         return self
@@ -43,14 +86,32 @@ Now the real one:
     @model_validator(mode='before')
     @classmethod
     def set_original_prompt(cls, data: dict[str, Any]) -> dict[str, Any]:
+        """Default ``og_prompt`` to the value of ``prompt``.
+
+        Args:
+            data: Raw input data, before validation.
+
+        Returns:
+            The input data, with ``og_prompt`` filled in if it was missing.
+        """
         if data.get("og_prompt") is None:
             data['og_prompt'] = data['prompt']
         return data
 
     def response(self, replace_spaces: bool = True) -> str | None:
-        return (self.prompt[len(self.og_prompt):].replace("Ġ", " ")
-                if replace_spaces else self.prompt[len(self.og_prompt):])\
-               if self.prompt is not None else None
+        """Return only the text generated after the original prompt.
+
+        Args:
+            replace_spaces: If True, replace the byte-level space marker
+                ``Ġ`` with a regular space.
+
+        Returns:
+            The generated text, or None if there is no prompt yet.
+        """
+        if self.prompt is None:
+            return None
+        generated = self.prompt[len(self.og_prompt):]
+        return generated.replace("Ġ", " ") if replace_spaces else generated
 
     def reprompt(self, m: "Model",
                  constrain: list[int],
@@ -58,6 +119,28 @@ Now the real one:
                  og: int = 0,
                  _cache: dict[str, Any] = {},
                  ) -> int:
+        """Run constrained decoding and store the JSON call in ``prompt``.
+
+        The function name is chosen token by token, restricted to pieces
+        that keep it a prefix of a real function name. The parameter keys
+        are forced and only their values are generated: strings may not
+        contain control characters or backslashes, and numbers may only
+        use digits, ``.`` and ``-``. The final JSON is built with
+        ``json.dumps``, so it is always valid.
+
+        Args:
+            m: Model wrapper holding the LLM and the function definitions.
+            constrain: Unused, kept for compatibility with the caller.
+            vocab: Mapping of token id to token string.
+            og: Unused, kept for compatibility with the caller.
+            _cache: Mutable default argument used on purpose as a
+                persistent cache. It is filled on the first call and reused
+                afterwards. It is not meant to be passed by the caller.
+
+        Returns:
+            1 when the call is finished (always, as everything is done in
+            a single call).
+        """
         if self.prompt is None:
             return 1
 
@@ -65,9 +148,11 @@ Now the real one:
         names = [f.name for f in m.fdefinitions] + ["fn_unknown_function"]
 
         def enc(text: str) -> list[int]:
-            return m.model.encode(text).tolist()[0]
+            """Encode ``text`` into a list of token ids."""
+            return cast(list[int], m.model.encode(text).tolist()[0])
 
-        def scores(ids: list[int]) -> np.ndarray:
+        def scores(ids: list[int]) -> np.ndarray[Any, np.dtype[np.float64]]:
+            """Return the next-token logits for the token ids ``ids``."""
             return np.asarray(
                 m.model.get_logits_from_input_ids(ids), dtype=float)
 
@@ -162,6 +247,14 @@ Now the real one:
 
 
 class Model(BaseModel):
+    """Wrapper around the LLM, its responses and the known functions.
+
+    Attributes:
+        model: The underlying ``llm_sdk`` small language model.
+        responses: JSON function calls generated so far.
+        fdefinitions: Definitions of the available functions.
+    """
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     model: llm_sdk.Small_LLM_Model = Field(
@@ -170,6 +263,15 @@ class Model(BaseModel):
     fdefinitions: list[FunctionDefinition] = Field(default_factory=list)
 
     def get_vocab(self) -> dict[int, str]:
+        """Load the tokenizer vocabulary from the model's vocab file.
+
+        Returns:
+            A mapping of token id to token string.
+
+        Raises:
+            SystemExit: If the vocab file cannot be read or parsed (an
+                error message is printed first).
+        """
         try:
             with open(self.model.get_path_to_vocab_file()) as file:
                 vocab_str: str = file.read()
@@ -185,6 +287,19 @@ class Model(BaseModel):
 
 
 def build_prefix(functions_definition: list[dict[str, Any]]) -> str:
+    """Build the instruction and few-shot prefix for the model.
+
+    The prefix lists the available functions with their signatures and
+    descriptions, followed by examples of correct requests and outputs.
+
+    Args:
+        functions_definition: Raw function definitions, as loaded from the
+            JSON file. Each needs ``name``, ``description`` and a
+            ``parameters`` dict mapping names to ``{"type": ...}``.
+
+    Returns:
+        The prefix text, ending right before the user's request.
+    """
     lines = []
     for fn in functions_definition:
         params = fn["parameters"]
@@ -219,6 +334,23 @@ def build_prefix(functions_definition: list[dict[str, Any]]) -> str:
 
 
 def main() -> None:
+    """Run the function calling pipeline from the command line.
+
+    Reads the function definitions and the test prompts, generates a
+    function call for each prompt with constrained decoding, prints the
+    total time taken and writes all the calls to a JSON file.
+
+    Command line arguments:
+        --functions_definition: Path to the functions definition JSON
+            (default: ``data/input/functions_definition.json``).
+        --input: Path to the test prompts JSON
+            (default: ``data/input/function_calling_tests.json``).
+        --output: Path of the output JSON
+            (default: ``data/output/function_calls.json``).
+
+    Raises:
+        SystemExit: If an input file cannot be read.
+    """
     argparser = argparse.ArgumentParser()
     argparser.add_argument("--functions_definition", type=str)
     argparser.add_argument("--input", type=str)
@@ -246,7 +378,7 @@ def main() -> None:
 
     fds: list[FunctionDefinition] = []
     fcs: list[FunctionCall] = []
-    
+
     start_time = time.perf_counter()
     for fd in fd_json:
         fds.append(FunctionDefinition(
@@ -274,7 +406,8 @@ def main() -> None:
         m.responses.append(fcalls.prompt) if fcalls.prompt is not None\
             else None
     finish_time = time.perf_counter()
-    print("====\ntotal time: " + str((finish_time - start_time)/60) + " minutes\n====")
+    print("====\ntotal time: " +
+          str((finish_time - start_time)/60) + " minutes\n====")
 
     output_path: str = args.output if args.output is not None \
         else 'data/output/function_calls.json'
